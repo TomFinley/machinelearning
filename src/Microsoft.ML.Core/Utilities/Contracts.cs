@@ -55,6 +55,11 @@ namespace Microsoft.ML.Runtime
     }
 #endif
 
+    /// <summary>
+    /// This utility class is used throughout ML.NET's components to make checking conditions and throwing exceptions easier and more uniform. It also does some work of attaching contextual information to any thrown exception.
+    /// 
+    /// All methods for checking and throwing exceptions have the raw
+    /// </summary>
 #if PRIVATE_CONTRACTS
     internal static partial class Contracts
 #else
@@ -112,7 +117,8 @@ namespace Microsoft.ML.Runtime
         }
 
         /// <summary>
-        /// Indicates whether the exception was "marked" the Contracts code.
+        /// Indicates whether the exception was "marked" by the <see cref="Contracts"/> code,
+        /// using the <see cref="IsMarkedKey"/>.
         /// </summary>
         public static bool IsMarked(this Exception ex)
         {
@@ -254,9 +260,12 @@ namespace Microsoft.ML.Runtime
 
         // Default exception type (currently InvalidOperationException)
 
+
+
         /// <summary>
         /// Default exception type (currently InvalidOperationException)
         /// </summary>
+        /// <returns>An <see cref="InvalidOperationException"/> with no message.</returns>
         public static Exception Except()
             => Process(new InvalidOperationException());
         public static Exception Except(this IExceptionContext ctx)
@@ -284,9 +293,9 @@ namespace Microsoft.ML.Runtime
         /// For signalling bad user input.
         /// </summary>
         public static Exception ExceptUserArg(string name)
-            =>Process(new ArgumentOutOfRangeException(name));
+            => Process(new ArgumentOutOfRangeException(name));
         public static Exception ExceptUserArg(this IExceptionContext ctx, string name)
-            =>Process(new ArgumentOutOfRangeException(name), ctx);
+            => Process(new ArgumentOutOfRangeException(name), ctx);
         public static Exception ExceptUserArg(string name, string msg)
             => Process(new ArgumentOutOfRangeException(name, msg));
         public static Exception ExceptUserArg(this IExceptionContext ctx, string name, string msg)
@@ -741,7 +750,7 @@ namespace Microsoft.ML.Runtime
 
         // Assert
 
-#region Private assert handling
+        #region Private assert handling
 
         private static void DbgFailCore(string msg, IExceptionContext ctx = null)
         {
@@ -800,7 +809,7 @@ namespace Microsoft.ML.Runtime
             DbgFailCore(string.Format(CultureInfo.InvariantCulture, "Non-empty assertion failure: {0}", msg), ctx);
         }
 
-#endregion Private assert handling
+        #endregion Private assert handling
 
         [Conditional("DEBUG")]
         public static void Assert(bool f)
