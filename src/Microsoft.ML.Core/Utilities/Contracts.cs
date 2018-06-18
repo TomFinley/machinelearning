@@ -56,10 +56,40 @@ namespace Microsoft.ML.Runtime
 #endif
 
     /// <summary>
-    /// This utility class is used throughout ML.NET's components to make checking conditions and throwing exceptions easier and more uniform. It also does some work of attaching contextual information to any thrown exception.
-    /// 
-    /// All methods for checking and throwing exceptions have the raw
+    /// This utility class is used throughout ML.NET's components to make checking conditions and throwing exceptions
+    /// easier and more uniform. It also does some work of attaching contextual information to <see
+    /// cref="Exception.Data"/> so that any thrown exception through this to give as much information as possible.
     /// </summary>
+    /// <remarks>
+    /// There are three major "types" of methods in this class: the <c>Check</c>, <c>Except</c>, and <c>Assert</c>
+    /// methods.
+    ///
+    /// The <c>Except</c> methods return (but do not throw) exceptions.
+    ///
+    /// The <code>Check</code> methods are conveniences that perform some sort of test on some sort of value -- what
+    /// type of test depends on the method being called -- and then throws an appropriate exception. For example: <see
+    /// cref="CheckValue{T}(IExceptionContext, T, string)"/> accepts an input value and if it is <c>null</c> throws the
+    /// exception returned from <see cref="ExceptValue(IExceptionContext, string)"/>.
+    ///
+    /// The <c>Check</c> conveniences exist to make certain all tests are identical, and also serve the side benefit of
+    /// shortening client code. The reason why the <c>Except</c> variants exist is primarily for cases where a formatted
+    /// error message is appropriate, since you do not want to compose a formatted string or pay the price of a
+    /// <c>params</c> style call if you aren't absolutely certain you need it.
+    ///
+    /// The <c>Assert</c> style calls are similar in structure to <c>Check</c>, except that they are only tested in the
+    /// debug build. For that reason, the purpose of those is code documentation rather than genuine error checking. For
+    /// this reason, diagnostic messages on these are generally unhelpful and discouraged. For that reason also, in
+    /// principle, no public-facing code should be structured in a way that triggering an assert is possible. Failing a
+    /// <c>Check</c> usually means that ML.NET code was misused, while an <c>Assert</c> means our code is buggy.
+    ///
+    /// All methods for checking and throwing exceptions have two forms, one as a static method on this class itself,
+    /// the other as an extension method on this class that takes an <see cref="IExceptionContext"/>. Whenever possible,
+    /// and especially for anything like a <c>Check</c> or <c>Except</c>, it is desirable to call via an exception
+    /// context, and then the most specific one available. So: an <see cref="IChannel"/> is better than an <see
+    /// cref="IHost"/> is better than an <see cref="IHostEnvironment"/>.
+    ///
+    /// The type of exceptions thrown may change in the future.
+    /// </remarks>
 #if PRIVATE_CONTRACTS
     internal static partial class Contracts
 #else
@@ -251,29 +281,40 @@ namespace Microsoft.ML.Runtime
         }
 
         // Standard Exception generation. Note that these do NOT throw the exception,
-        // merely construct (and log) it.
+        // merely construct it, and mark it.
         // NOTE: The ordering of arguments to these is standardized to be (when they exist):
         // * inner exception
         // * parameter value of type T
         // * parameter name
         // * message composition - either a single string or format followed by params array
 
-        // Default exception type (currently InvalidOperationException)
-
-
-
         /// <summary>
-        /// Default exception type (currently InvalidOperationException)
+        /// Creates a new default exception (currently an <see cref="InvalidOperationException"/>). No message is included, so senerally this
+        /// method should be disfavored in favor of something that attaches a message like <see cref="Except(string)"/>.
         /// </summary>
-        /// <returns>An <see cref="InvalidOperationException"/> with no message.</returns>
+        /// <returns>An exception with no message</returns>
         public static Exception Except()
             => Process(new InvalidOperationException());
+
+        /// <summary>
+        /// Creates a new default exception.
+        /// </summary>
+        /// <param name="ctx">The exception context used to process the exception</param>
+        /// <returns>An exception with a message</returns>
         public static Exception Except(this IExceptionContext ctx)
             => Process(new InvalidOperationException(), ctx);
+
+        /// <summary>
+        /// Creates a new default exception
+        /// </summary>
+        /// <param name="msg"></param>
+        /// <returns></returns>
         public static Exception Except(string msg)
             => Process(new InvalidOperationException(msg));
         public static Exception Except(this IExceptionContext ctx, string msg)
             => Process(new InvalidOperationException(msg), ctx);
+
+
         public static Exception Except(string msg, params object[] args)
             => Process(new InvalidOperationException(GetMsg(msg, args)));
         public static Exception Except(this IExceptionContext ctx, string msg, params object[] args)
@@ -284,6 +325,8 @@ namespace Microsoft.ML.Runtime
             => Process(new InvalidOperationException(msg, inner), ctx);
         public static Exception Except(Exception inner, string msg, params object[] args)
             => Process(new InvalidOperationException(GetMsg(msg, args), inner));
+
+
         public static Exception Except(this IExceptionContext ctx, Exception inner, string msg, params object[] args)
             => Process(new InvalidOperationException(GetMsg(msg, args), inner), ctx);
 
