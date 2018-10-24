@@ -460,7 +460,7 @@ namespace Microsoft.ML.Runtime.RunTests
             Done();
         }
 
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Binary")]
         [TestCategory("LightGBM")]
         public void LightGBMClassificationTest()
@@ -476,7 +476,7 @@ namespace Microsoft.ML.Runtime.RunTests
             Done();
         }
 
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Binary"), TestCategory("LightGBM")]
         public void GossLightGBMTest()
         {
@@ -486,7 +486,7 @@ namespace Microsoft.ML.Runtime.RunTests
             Done();
         }
 
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Binary")]
         [TestCategory("LightGBM")]
         public void DartLightGBMTest()
@@ -500,7 +500,7 @@ namespace Microsoft.ML.Runtime.RunTests
         /// <summary>
         /// A test for multi class classifiers.
         /// </summary>
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Multiclass")]
         [TestCategory("LightGBM")]
         public void MultiClassifierLightGBMKeyLabelTest()
@@ -514,7 +514,7 @@ namespace Microsoft.ML.Runtime.RunTests
         /// <summary>
         /// A test for multi class classifiers.
         /// </summary>
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Multiclass")]
         [TestCategory("LightGBM")]
         public void MultiClassifierLightGBMKeyLabelU404Test()
@@ -528,7 +528,7 @@ namespace Microsoft.ML.Runtime.RunTests
         /// <summary>
         /// A test for regression.
         /// </summary>
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Regression")]
         [TestCategory("LightGBM")]
         public void RegressorLightGBMTest()
@@ -542,7 +542,7 @@ namespace Microsoft.ML.Runtime.RunTests
         /// <summary>
         /// A test for regression.
         /// </summary>
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Regression")]
         [TestCategory("LightGBM")]
         public void RegressorLightGBMMAETest()
@@ -556,7 +556,7 @@ namespace Microsoft.ML.Runtime.RunTests
         /// <summary>
         /// A test for regression.
         /// </summary>
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // LightGBM is 64-bit only
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // LightGBM is 64-bit only
         [TestCategory("Regression")]
         [TestCategory("LightGBM")]
         public void RegressorLightGBMRMSETest()
@@ -923,8 +923,7 @@ namespace Microsoft.ML.Runtime.RunTests
             }
         }
 
-
-        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess))] // x86 output differs from Baseline
+        [ConditionalFact(typeof(Environment), nameof(Environment.Is64BitProcess), Skip = "Tom")] // x86 output differs from Baseline
         [TestCategory("Binary")]
         [TestCategory("FastTree")]
         public void FastTreeBinaryClassificationCategoricalSplitTest()
