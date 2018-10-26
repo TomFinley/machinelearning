@@ -95,7 +95,7 @@ namespace Microsoft.ML.Trainers.FastTree
         {
         }
 
-        protected override float GetMaxLabel()
+        private protected override float GetMaxLabel()
         {
             return GetLabelGains().Length - 1;
         }
@@ -104,16 +104,15 @@ namespace Microsoft.ML.Trainers.FastTree
         {
             Host.CheckValue(context, nameof(context));
             var trainData = context.TrainingSet;
-            ValidData = context.ValidationSet;
+            var state = new TrainState();
 
             using (var ch = Host.Start("Training"))
             {
                 var maxLabel = GetLabelGains().Length - 1;
-                ConvertData(trainData);
-                TrainCore(ch);
-                FeatureCount = trainData.Schema.Feature.Type.ValueCount;
+                ConvertData(trainData, context.ValidationSet, state);
+                TrainCore(ch, state);
             }
-            return new FastTreeRankingPredictor(Host, TrainedEnsemble, FeatureCount, InnerArgs);
+            return new FastTreeRankingPredictor(Host, state.TrainedEnsemble, state.FeatureCount, InnerArgs);
         }
 
         public Double[] GetLabelGains()
@@ -131,7 +130,7 @@ namespace Microsoft.ML.Trainers.FastTree
             }
         }
 
-        protected override void CheckArgs(IChannel ch)
+        private protected override void CheckArgs(IChannel ch, TrainState state)
         {
             if (!string.IsNullOrEmpty(Args.CustomGains))
             {
@@ -158,55 +157,55 @@ namespace Microsoft.ML.Trainers.FastTree
             ch.CheckUserArg((Args.EarlyStoppingRule == null && !Args.EnablePruning) || (Args.EarlyStoppingMetrics == 1 || Args.EarlyStoppingMetrics == 3), nameof(Args.EarlyStoppingMetrics),
                 "earlyStoppingMetrics should be 1 or 3.");
 
-            base.CheckArgs(ch);
+            base.CheckArgs(ch, state);
         }
 
-        protected override void Initialize(IChannel ch)
+        private protected override void InitializeTraining(IChannel ch, TrainState state)
         {
-            base.Initialize(ch);
+            base.InitializeTraining(ch, state);
             if (Args.CompressEnsemble)
             {
                 _ensembleCompressor = new LassoBasedEnsembleCompressor();
-                _ensembleCompressor.Initialize(Args.NumTrees, TrainSet, TrainSet.Ratings, Args.RngSeed);
+                _ensembleCompressor.Initialize(Args.NumTrees, state.TrainSet, state.TrainSet.Ratings, Args.RngSeed);
             }
         }
 
-        protected override ObjectiveFunctionBase ConstructObjFunc(IChannel ch)
+        private protected override ObjectiveFunctionBase ConstructObjFunc(IChannel ch, TrainState state)
         {
-            return new LambdaRankObjectiveFunction(TrainSet, TrainSet.Ratings, Args, ParallelTraining);
+            return new LambdaRankObjectiveFunction(state.TrainSet, state.TrainSet.Ratings, Args, ParallelTraining);
         }
 
-        protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch)
+        private protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch, TrainState state)
         {
-            OptimizationAlgorithm optimizationAlgorithm = base.ConstructOptimizationAlgorithm(ch);
+            OptimizationAlgorithm optimizationAlgorithm = base.ConstructOptimizationAlgorithm(ch, state);
             if (Args.UseLineSearch)
             {
-                _specialTrainSetTest = new FastNdcgTest(optimizationAlgorithm.TrainingScores, TrainSet.Ratings, Args.SortingAlgorithm, Args.EarlyStoppingMetrics);
+                _specialTrainSetTest = new FastNdcgTest(optimizationAlgorithm.TrainingScores, state.TrainSet.Ratings, Args.SortingAlgorithm, Args.EarlyStoppingMetrics);
                 optimizationAlgorithm.AdjustTreeOutputsOverride = new LineSearch(_specialTrainSetTest, 0, Args.NumPostBracketSteps, Args.MinStepSize);
             }
             return optimizationAlgorithm;
         }
 
-        protected override BaggingProvider CreateBaggingProvider()
+        private protected override BaggingProvider CreateBaggingProvider(TrainState state)
         {
             Host.Assert(Args.BaggingSize > 0);
-            return new RankingBaggingProvider(TrainSet, Args.NumLeaves, Args.RngSeed, Args.BaggingTrainFraction);
+            return new RankingBaggingProvider(state.TrainSet, Args.NumLeaves, Args.RngSeed, Args.BaggingTrainFraction);
         }
 
-        protected override void PrepareLabels(IChannel ch)
+        private protected override void PrepareLabels(IChannel ch, TrainState state)
         {
         }
 
-        protected override Test ConstructTestForTrainingData()
+        private protected override Test ConstructTestForTrainingData(TrainState state)
         {
-            return new NdcgTest(ConstructScoreTracker(TrainSet), TrainSet.Ratings, Args.SortingAlgorithm);
+            return new NdcgTest(state.ConstructScoreTracker(state.TrainSet), state.TrainSet.Ratings, Args.SortingAlgorithm);
         }
 
-        protected override void InitializeTests()
+        private protected override void InitializeTests(TrainState state)
         {
             if (Args.TestFrequency != int.MaxValue)
             {
-                AddFullTests();
+                AddFullTests(state);
             }
 
             if (Args.PrintTestGraph)
@@ -222,53 +221,53 @@ namespace Microsoft.ML.Trainers.FastTree
             }
 
             // Tests for early stopping.
-            TrainTest = CreateSpecialTrainSetTest();
-            if (ValidSet != null)
-                ValidTest = CreateSpecialValidSetTest();
+            state.TrainTest = CreateSpecialTrainSetTest(state);
+            if (state.ValidSet != null)
+                state.ValidTest = CreateSpecialValidSetTest(state);
 
             if (Args.PrintTrainValidGraph && Args.EnablePruning && _specialTrainSetTest == null)
             {
-                _specialTrainSetTest = CreateSpecialTrainSetTest();
+                _specialTrainSetTest = CreateSpecialTrainSetTest(state);
             }
 
-            if (Args.EnablePruning && ValidTest != null)
+            if (Args.EnablePruning && state.ValidTest != null)
             {
                 if (!Args.UseTolerantPruning)
                 {
                     //use simple eraly stopping condition
-                    PruningTest = new TestHistory(ValidTest, 0);
+                    state.PruningTest = new TestHistory(state.ValidTest, 0);
                 }
                 else
                 {
                     //use tolerant stopping condition
-                    PruningTest = new TestWindowWithTolerance(ValidTest, 0, Args.PruningWindowSize, Args.PruningThreshold);
+                    state.PruningTest = new TestWindowWithTolerance(state.ValidTest, 0, Args.PruningWindowSize, Args.PruningThreshold);
                 }
             }
         }
 
-        private void AddFullTests()
+        private void AddFullTests(TrainState state)
         {
-            Tests.Add(CreateStandardTest(TrainSet));
+            state.Tests.Add(CreateStandardTest(state.TrainSet, state));
 
-            if (ValidSet != null)
+            if (state.ValidSet != null)
             {
-                Test test = CreateStandardTest(ValidSet);
-                Tests.Add(test);
+                Test test = CreateStandardTest(state.ValidSet, state);
+                state.Tests.Add(test);
             }
 
-            for (int t = 0; TestSets != null && t < TestSets.Length; ++t)
+            for (int t = 0; state.TestSets != null && t < state.TestSets.Length; ++t)
             {
-                Test test = CreateStandardTest(TestSets[t]);
+                Test test = CreateStandardTest(state.TestSets[t], state);
                 if (t == 0)
                 {
                     _firstTestSetHistory = new TestHistory(test, 0);
                 }
 
-                Tests.Add(test);
+                state.Tests.Add(test);
             }
         }
 
-        protected override void PrintIterationMessage(IChannel ch, IProgressChannel pch)
+        private protected override void PrintIterationMessage(IChannel ch, IProgressChannel pch, TrainState state)
         {
             // REVIEW: Shift to using progress channels to report this information.
 #if OLD_TRACE
@@ -300,11 +299,11 @@ namespace Microsoft.ML.Trainers.FastTree
             else
                 base.PrintIterationMessage(ch, pch);
 #else
-            base.PrintIterationMessage(ch, pch);
+            base.PrintIterationMessage(ch, pch, state);
 #endif
         }
 
-        protected override void ComputeTests()
+        private protected override void ComputeTests(TrainState state)
         {
             if (_firstTestSetHistory != null)
                 _firstTestSetHistory.ComputeTests();
@@ -312,15 +311,14 @@ namespace Microsoft.ML.Trainers.FastTree
             if (_specialTrainSetTest != null)
                 _specialTrainSetTest.ComputeTests();
 
-            if (PruningTest != null)
-                PruningTest.ComputeTests();
+            state.PruningTest?.ComputeTests();
         }
 
-        protected override string GetTestGraphLine()
+        private protected override string GetTestGraphLine(TrainState state)
         {
             StringBuilder lineBuilder = new StringBuilder();
 
-            lineBuilder.AppendFormat("Eval:\tnet.{0:D8}.ini", Ensemble.NumTrees - 1);
+            lineBuilder.AppendFormat("Eval:\tnet.{0:D8}.ini", state.Ensemble.NumTrees - 1);
 
             foreach (var r in _firstTestSetHistory.ComputeTests())
             {
@@ -339,9 +337,9 @@ namespace Microsoft.ML.Trainers.FastTree
                 trainTestResult = _specialTrainSetTest.ComputeTests().First().FinalValue;
             }
 
-            if (PruningTest != null)
+            if (state.PruningTest != null)
             {
-                validTestResult = PruningTest.ComputeTests().First().FinalValue;
+                validTestResult = state.PruningTest.ComputeTests().First().FinalValue;
             }
 
             lineBuilder.AppendFormat("\t{0:0.0000}\t{1:0.0000}", trainTestResult, validTestResult);
@@ -349,39 +347,40 @@ namespace Microsoft.ML.Trainers.FastTree
             return lineBuilder.ToString();
         }
 
-        protected override void Train(IChannel ch)
+        private protected override void Train(IChannel ch, TrainState state)
         {
-            base.Train(ch);
+            base.Train(ch, state);
             // Print final last iteration.
             // Note that trainNDCG printed in graph will be from copy of a value from previous iteration
             // and will diffre slightly from the proper final value computed by FullTest.
             // We cannot compute the final NDCG here due to the fact we use FastNDCGTestForTrainSet computing NDCG based on label sort saved during gradient computation (and we don;t have gradients for n+1 iteration)
             // Keeping it in sync with original FR code
-            PrintTestGraph(ch);
+            PrintTestGraph(ch, state);
         }
 
-        protected override void CustomizedTrainingIteration(RegressionTree tree)
+        private protected override void CustomizedTrainingIteration(RegressionTree tree, TrainState state)
         {
             Contracts.AssertValueOrNull(tree);
             if (tree != null && Args.CompressEnsemble)
             {
-                double[] trainOutputs = Ensemble.GetTreeAt(Ensemble.NumTrees - 1).GetOutputs(TrainSet);
-                _ensembleCompressor.SetTreeScores(Ensemble.NumTrees - 1, trainOutputs);
+                double[] trainOutputs = state.Ensemble.GetTreeAt(state.Ensemble.NumTrees - 1).GetOutputs(state.TrainSet);
+                _ensembleCompressor.SetTreeScores(state.Ensemble.NumTrees - 1, trainOutputs);
             }
         }
 
         /// <summary>
         /// Create standard test for dataset.
         /// </summary>
-        /// <param name="dataset">dataset used for testing</param>
-        /// <returns>standard test for the dataset</returns>
-        private Test CreateStandardTest(Dataset dataset)
+        /// <param name="dataset">dataset used for testing.</param>
+        /// <param name="state">The training state holding the datasets.</param>
+        /// <returns>standard test for the dataset.</returns>
+        private Test CreateStandardTest(Dataset dataset, TrainState state)
         {
             if (Utils.Size(dataset.MaxDcg) == 0)
                 dataset.Skeleton.RecomputeMaxDcg(10);
 
             return new NdcgTest(
-                ConstructScoreTracker(dataset),
+                state.ConstructScoreTracker(dataset),
                 dataset.Ratings,
                 Args.SortingAlgorithm);
         }
@@ -390,12 +389,12 @@ namespace Microsoft.ML.Trainers.FastTree
         /// Create the special test for train set.
         /// </summary>
         /// <returns>test for train set</returns>
-        private Test CreateSpecialTrainSetTest()
+        private Test CreateSpecialTrainSetTest(TrainState state)
         {
             return new FastNdcgTestForTrainSet(
-                OptimizationAlgorithm.TrainingScores,
-                OptimizationAlgorithm.ObjectiveFunction as LambdaRankObjectiveFunction,
-                TrainSet.Ratings,
+                state.OptimizationAlgorithm.TrainingScores,
+                state.OptimizationAlgorithm.ObjectiveFunction as LambdaRankObjectiveFunction,
+                state.TrainSet.Ratings,
                 Args.SortingAlgorithm,
                 Args.EarlyStoppingMetrics);
         }
@@ -404,11 +403,11 @@ namespace Microsoft.ML.Trainers.FastTree
         /// Create the special test for valid set.
         /// </summary>
         /// <returns>test for train set</returns>
-        private Test CreateSpecialValidSetTest()
+        private Test CreateSpecialValidSetTest(TrainState state)
         {
             return new FastNdcgTest(
-                ConstructScoreTracker(ValidSet),
-                ValidSet.Ratings,
+                state.ConstructScoreTracker(state.ValidSet),
+                state.ValidSet.Ratings,
                 Args.SortingAlgorithm,
                 Args.EarlyStoppingMetrics);
         }
@@ -417,9 +416,9 @@ namespace Microsoft.ML.Trainers.FastTree
         /// Create the test for the first test set.
         /// </summary>
         /// <returns>test for the first test set</returns>
-        private Test CreateFirstTestSetTest()
+        private Test CreateFirstTestSetTest(TrainState state)
         {
-            return CreateStandardTest(TestSets[0]);
+            return CreateStandardTest(state.TestSets[0], state);
         }
 
         /// <summary>

@@ -90,6 +90,7 @@ namespace Microsoft.ML.Trainers.FastTree
         {
             Host.CheckValue(context, nameof(context));
             var trainData = context.TrainingSet;
+
             ValidData = context.ValidationSet;
 
             using (var ch = Host.Start("Training"))
@@ -102,7 +103,7 @@ namespace Microsoft.ML.Trainers.FastTree
                 ConvertData(trainData);
                 TrainCore(ch);
             }
-            return new FastTreeTweediePredictor(Host, TrainedEnsemble, FeatureCount, InnerArgs);
+            return new FastTreeTweediePredictor(Host, state.TrainedEnsemble, state.FeatureCount, InnerArgs);
         }
 
         protected override void CheckArgs(IChannel ch)
@@ -122,14 +123,14 @@ namespace Microsoft.ML.Trainers.FastTree
                     "earlyStoppingMetrics should be 1 or 2. (1: L1, 2: L2)");
         }
 
-        protected override ObjectiveFunctionBase ConstructObjFunc(IChannel ch)
+        private protected override ObjectiveFunctionBase ConstructObjFunc(IChannel ch, TrainState state)
         {
-            return new ObjectiveImpl(TrainSet, Args);
+            return new ObjectiveImpl(state.TrainSet, Args);
         }
 
-        protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch)
+        private protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch, TrainState state)
         {
-            OptimizationAlgorithm optimizationAlgorithm = base.ConstructOptimizationAlgorithm(ch);
+            OptimizationAlgorithm optimizationAlgorithm = base.ConstructOptimizationAlgorithm(ch, state);
             if (Args.UseLineSearch)
             {
                 var lossCalculator = new RegressionTest(optimizationAlgorithm.TrainingScores);
@@ -159,14 +160,13 @@ namespace Microsoft.ML.Trainers.FastTree
             return Utils.BuildArray(dlabels.Length, i => (float)dlabels[i]);
         }
 
-        protected override void PrepareLabels(IChannel ch)
+        private protected override void PrepareLabels(IChannel ch, TrainState state)
         {
-            // Intentionally empty.
         }
 
-        protected override Test ConstructTestForTrainingData()
+        private protected override Test ConstructTestForTrainingData(TrainState state)
         {
-            return new RegressionTest(ConstructScoreTracker(TrainSet));
+            return new RegressionTest(state.ConstructScoreTracker(state.TrainSet));
         }
 
         private void Initialize()
@@ -179,31 +179,31 @@ namespace Microsoft.ML.Trainers.FastTree
             };
         }
 
-        private void AddFullRegressionTests()
+        private void AddFullRegressionTests(TrainState state)
         {
             // Always compute training L1/L2 errors.
-            Tests.Add(new RegressionTest(ConstructScoreTracker(TrainSet)));
+            state.Tests.Add(new RegressionTest(state.ConstructScoreTracker(state.TrainSet)));
             RegressionTest validTest = null;
-            if (ValidSet != null)
+            if (state.ValidSet != null)
             {
-                validTest = new RegressionTest(ConstructScoreTracker(ValidSet));
-                Tests.Add(validTest);
+                validTest = new RegressionTest(state.ConstructScoreTracker(state.ValidSet));
+                state.Tests.Add(validTest);
             }
 
             // If external label is missing use Rating column for L1/L2 error.
             // The values may not make much sense if regression value is not an actual label value.
-            if (TestSets != null)
+            if (state.TestSets != null)
             {
-                for (int t = 0; t < TestSets.Length; ++t)
-                    Tests.Add(new RegressionTest(ConstructScoreTracker(TestSets[t])));
+                for (int t = 0; t < state.TestSets.Length; ++t)
+                    state.Tests.Add(new RegressionTest(state.ConstructScoreTracker(state.TestSets[t])));
             }
         }
 
-        protected override void InitializeTests()
+        private protected override void InitializeTests(TrainState state)
         {
             // Initialize regression tests.
             if (Args.TestFrequency != int.MaxValue)
-                AddFullRegressionTests();
+                AddFullRegressionTests(state);
 
             if (Args.PrintTestGraph)
             {
@@ -212,37 +212,37 @@ namespace Microsoft.ML.Trainers.FastTree
                 // Adding to a tests would result in printing the results after final iteration.
                 if (_firstTestSetHistory == null)
                 {
-                    var firstTestSetTest = new RegressionTest(ConstructScoreTracker(TestSets[0]));
+                    var firstTestSetTest = new RegressionTest(state.ConstructScoreTracker(state.TestSets[0]));
                     _firstTestSetHistory = new TestHistory(firstTestSetTest, 0);
                 }
             }
 
             if (Args.PrintTrainValidGraph && _trainRegressionTest == null)
             {
-                Test trainRegressionTest = new RegressionTest(ConstructScoreTracker(TrainSet));
+                Test trainRegressionTest = new RegressionTest(state.ConstructScoreTracker(state.TrainSet));
                 _trainRegressionTest = trainRegressionTest;
             }
 
-            if (Args.PrintTrainValidGraph && _testRegressionTest == null && TestSets != null && TestSets.Length > 0)
-                _testRegressionTest = new RegressionTest(ConstructScoreTracker(TestSets[0]));
+            if (Args.PrintTrainValidGraph && _testRegressionTest == null && Utils.Size(state.TestSets) > 0)
+                _testRegressionTest = new RegressionTest(state.ConstructScoreTracker(state.TestSets[0]));
 
             // Add early stopping if appropriate.
-            TrainTest = new RegressionTest(ConstructScoreTracker(TrainSet), Args.EarlyStoppingMetrics);
-            if (ValidSet != null)
-                ValidTest = new RegressionTest(ConstructScoreTracker(ValidSet), Args.EarlyStoppingMetrics);
+            state.TrainTest = new RegressionTest(state.ConstructScoreTracker(state.TrainSet), Args.EarlyStoppingMetrics);
+            if (state.ValidSet != null)
+                state.ValidTest = new RegressionTest(state.ConstructScoreTracker(state.ValidSet), Args.EarlyStoppingMetrics);
 
-            if (Args.EnablePruning && ValidTest != null)
+            if (Args.EnablePruning && state.ValidTest != null)
             {
                 if (Args.UseTolerantPruning) // Use simple early stopping condition.
-                    PruningTest = new TestWindowWithTolerance(ValidTest, 0, Args.PruningWindowSize, Args.PruningThreshold);
+                    state.PruningTest = new TestWindowWithTolerance(state.ValidTest, 0, Args.PruningWindowSize, Args.PruningThreshold);
                 else
-                    PruningTest = new TestHistory(ValidTest, 0);
+                    state.PruningTest = new TestHistory(state.ValidTest, 0);
             }
         }
 
-        protected override void PrintIterationMessage(IChannel ch, IProgressChannel pch)
+        private protected override void PrintIterationMessage(IChannel ch, IProgressChannel pch, TrainState state)
         {
-            base.PrintIterationMessage(ch, pch);
+            base.PrintIterationMessage(ch, pch, state);
         }
 
         protected override string GetTestGraphHeader()
@@ -258,7 +258,7 @@ namespace Microsoft.ML.Trainers.FastTree
             return headerBuilder.ToString();
         }
 
-        protected override void ComputeTests()
+        private protected override void ComputeTests(TrainState state)
         {
             if (_firstTestSetHistory != null)
                 _firstTestSetHistory.ComputeTests();
@@ -269,8 +269,8 @@ namespace Microsoft.ML.Trainers.FastTree
             if (_testRegressionTest != null)
                 _testRegressionTest.ComputeTests();
 
-            if (PruningTest != null)
-                PruningTest.ComputeTests();
+            if (state.PruningTest != null)
+                state.PruningTest.ComputeTests();
         }
 
         protected override string GetTestGraphLine()

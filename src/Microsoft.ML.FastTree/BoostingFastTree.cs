@@ -41,7 +41,7 @@ namespace Microsoft.ML.Trainers.FastTree
             }
         }
 
-        protected override void CheckArgs(IChannel ch)
+        private protected override void CheckArgs(IChannel ch, TrainState state)
         {
             if (Args.OptimizationAlgorithm == BoostedTreeArgs.OptimizationAlgorithmType.AcceleratedGradientDescent)
                 Args.UseLineSearch = true;
@@ -57,22 +57,22 @@ namespace Microsoft.ML.Trainers.FastTree
             if (Args.NumLeaves > 2 && Args.HistogramPoolSize > Args.NumLeaves - 1)
                 throw ch.Except("Histogram pool size (ps) must be at most numLeaves - 1.");
 
-            if (Args.EnablePruning && !HasValidSet)
+            if (Args.EnablePruning && !state.HasValidSet)
                 throw ch.Except("Cannot perform pruning (pruning) without a validation set (valid).");
 
-            if (Args.EarlyStoppingRule != null && !HasValidSet)
+            if (Args.EarlyStoppingRule != null && !state.HasValidSet)
                 throw ch.Except("Cannot perform early stopping without a validation set (valid).");
 
-            if (Args.UseTolerantPruning && (!Args.EnablePruning || !HasValidSet))
+            if (Args.UseTolerantPruning && (!Args.EnablePruning || !state.HasValidSet))
                 throw ch.Except("Cannot perform tolerant pruning (prtol) without pruning (pruning) and a validation set (valid)");
 
-            base.CheckArgs(ch);
+            base.CheckArgs(ch, state);
         }
 
-        protected override TreeLearner ConstructTreeLearner(IChannel ch)
+        private protected override TreeLearner ConstructTreeLearner(IChannel ch, TrainState state)
         {
             return new LeastSquaresRegressionTreeLearner(
-                TrainSet, Args.NumLeaves, Args.MinDocumentsInLeafs, Args.EntropyCoefficient,
+                state.TrainSet, Args.NumLeaves, Args.MinDocumentsInLeafs, Args.EntropyCoefficient,
                 Args.FeatureFirstUsePenalty, Args.FeatureReusePenalty, Args.SoftmaxTemperature,
                 Args.HistogramPoolSize, Args.RngSeed, Args.SplitFraction, Args.FilterZeroLambdas,
                 Args.AllowEmptyTrees, Args.GainConfidenceLevel, Args.MaxCategoricalGroupsPerNode,
@@ -80,63 +80,63 @@ namespace Microsoft.ML.Trainers.FastTree
                 Args.MinDocsPercentageForCategoricalSplit, Args.Bundling, Args.MinDocsForCategoricalSplit, Args.Bias);
         }
 
-        protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch)
+        private protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch, TrainState state)
         {
             Contracts.CheckValue(ch, nameof(ch));
             OptimizationAlgorithm optimizationAlgorithm;
-            IGradientAdjuster gradientWrapper = MakeGradientWrapper(ch);
+            IGradientAdjuster gradientWrapper = MakeGradientWrapper(ch, state);
 
             switch (Args.OptimizationAlgorithm)
             {
                 case BoostedTreeArgs.OptimizationAlgorithmType.GradientDescent:
-                    optimizationAlgorithm = new GradientDescent(Ensemble, TrainSet, InitTrainScores, gradientWrapper);
+                    optimizationAlgorithm = new GradientDescent(state.Ensemble, state.TrainSet, state.InitTrainScores, gradientWrapper);
                     break;
                 case BoostedTreeArgs.OptimizationAlgorithmType.AcceleratedGradientDescent:
-                    optimizationAlgorithm = new AcceleratedGradientDescent(Ensemble, TrainSet, InitTrainScores, gradientWrapper);
+                    optimizationAlgorithm = new AcceleratedGradientDescent(state.Ensemble, state.TrainSet, state.InitTrainScores, gradientWrapper);
                     break;
                 case BoostedTreeArgs.OptimizationAlgorithmType.ConjugateGradientDescent:
-                    optimizationAlgorithm = new ConjugateGradientDescent(Ensemble, TrainSet, InitTrainScores, gradientWrapper);
+                    optimizationAlgorithm = new ConjugateGradientDescent(state.Ensemble, state.TrainSet, state.InitTrainScores, gradientWrapper);
                     break;
                 default:
                     throw ch.Except("Unknown optimization algorithm '{0}'", Args.OptimizationAlgorithm);
             }
 
-            optimizationAlgorithm.TreeLearner = ConstructTreeLearner(ch);
-            optimizationAlgorithm.ObjectiveFunction = ConstructObjFunc(ch);
+            optimizationAlgorithm.TreeLearner = ConstructTreeLearner(ch, state);
+            optimizationAlgorithm.ObjectiveFunction = ConstructObjFunc(ch, state);
             optimizationAlgorithm.Smoothing = Args.Smoothing;
             optimizationAlgorithm.DropoutRate = Args.DropoutRate;
             optimizationAlgorithm.DropoutRng = new Random(Args.RngSeed);
-            optimizationAlgorithm.PreScoreUpdateEvent += PrintTestGraph;
+            optimizationAlgorithm.PreScoreUpdateEvent += c => PrintTestGraph(c, state);
 
             return optimizationAlgorithm;
         }
 
-        protected override IGradientAdjuster MakeGradientWrapper(IChannel ch)
+        private protected override IGradientAdjuster MakeGradientWrapper(IChannel ch, TrainState state)
         {
             if (!Args.BestStepRankingRegressionTrees)
-                return base.MakeGradientWrapper(ch);
+                return base.MakeGradientWrapper(ch, state);
 
             // REVIEW: If this is ranking specific than cmd.bestStepRankingRegressionTrees and
             // this code should be part of Ranking application (and not application).
-            if (AreSamplesWeighted(ch))
+            if (state.SamplesAreWeighted)
                 return new QueryWeightsBestResressionStepGradientWrapper();
             else
                 return new BestStepRegressionGradientWrapper();
         }
 
-        protected override bool ShouldStop(IChannel ch, ref IEarlyStoppingCriterion earlyStoppingRule, ref int bestIteration)
+        private protected override bool ShouldStop(IChannel ch, TrainState state, ref IEarlyStoppingCriterion earlyStoppingRule, ref int bestIteration)
         {
             if (Args.EarlyStoppingRule == null)
                 return false;
 
-            ch.AssertValue(ValidTest);
-            ch.AssertValue(TrainTest);
+            ch.AssertValue(state.ValidTest);
+            ch.AssertValue(state.TrainTest);
 
-            var validationResult = ValidTest.ComputeTests().First();
+            var validationResult = state.ValidTest.ComputeTests().First();
             ch.Assert(validationResult.FinalValue >= 0);
             bool lowerIsBetter = validationResult.LowerIsBetter;
 
-            var trainingResult = TrainTest.ComputeTests().First();
+            var trainingResult = state.TrainTest.ComputeTests().First();
             ch.Assert(trainingResult.FinalValue >= 0);
 
             // Create early stopping rule.
@@ -151,17 +151,17 @@ namespace Microsoft.ML.Trainers.FastTree
                 (Float)trainingResult.FinalValue, out isBestCandidate);
 
             if (isBestCandidate)
-                bestIteration = Ensemble.NumTrees;
+                bestIteration = state.Ensemble.NumTrees;
 
             return shouldStop;
         }
 
-        protected override int GetBestIteration(IChannel ch)
+        private protected override int GetBestIteration(IChannel ch, TrainState state)
         {
-            int bestIteration = Ensemble.NumTrees;
-            if (!Args.WriteLastEnsemble && PruningTest != null)
+            int bestIteration = state.Ensemble.NumTrees;
+            if (!Args.WriteLastEnsemble && state.PruningTest != null)
             {
-                bestIteration = PruningTest.BestIteration;
+                bestIteration = state.PruningTest.BestIteration;
                 ch.Info("Pruning picked iteration {0}", bestIteration);
             }
             return bestIteration;

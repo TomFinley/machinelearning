@@ -112,8 +112,17 @@ namespace Microsoft.ML.Trainers.FastTree
         internal const string Summary = "Uses a logit-boost boosted tree learner to perform binary classification.";
         internal const string ShortName = "ftc";
 
-        private bool[] _trainSetLabels;
-        private double _sigmoidParameter;
+        // The sigmoid parameter is 2 * learning rate, for traditional FastTreeClassification loss
+        private double SigmoidParameter => 2.0 * Args.LearningRates;
+
+        private sealed class MyTrainState : TrainState
+        {
+            public bool[] TrainSetLabels;
+
+            public MyTrainState() : base()
+            {
+            }
+        }
 
         /// <summary>
         /// Initializes a new instance of <see cref="FastTreeBinaryClassificationTrainer"/>
@@ -138,8 +147,6 @@ namespace Microsoft.ML.Trainers.FastTree
             Action<Arguments> advancedSettings = null)
             : base(env, TrainerUtils.MakeBoolScalarLabel(labelColumn), featureColumn, weightColumn, null, numLeaves, numTrees, minDocumentsInLeafs, learningRate, advancedSettings)
         {
-            // Set the sigmoid parameter to the 2 * learning rate, for traditional FastTreeClassification loss
-            _sigmoidParameter = 2.0 * Args.LearningRates;
         }
 
         /// <summary>
@@ -148,8 +155,6 @@ namespace Microsoft.ML.Trainers.FastTree
         internal FastTreeBinaryClassificationTrainer(IHostEnvironment env, Arguments args)
             : base(env, args, TrainerUtils.MakeBoolScalarLabel(args.LabelColumn))
         {
-            // Set the sigmoid parameter to the 2 * learning rate, for traditional FastTreeClassification loss
-            _sigmoidParameter = 2.0 * Args.LearningRates;
         }
 
         public override PredictionKind PredictionKind => PredictionKind.BinaryClassification;
@@ -158,41 +163,37 @@ namespace Microsoft.ML.Trainers.FastTree
         {
             Host.CheckValue(context, nameof(context));
             var trainData = context.TrainingSet;
-            ValidData = context.ValidationSet;
+            var state = new TrainState();
 
             using (var ch = Host.Start("Training"))
             {
-                ch.CheckValue(trainData, nameof(trainData));
-                trainData.CheckBinaryLabel();
-                trainData.CheckFeatureFloatVector();
-                trainData.CheckOptFloatWeight();
-                FeatureCount = trainData.Schema.Feature.Type.ValueCount;
-                ConvertData(trainData);
-                TrainCore(ch);
+                ConvertData(trainData, context.ValidationSet, state);
+                TrainCore(ch, state);
             }
 
             // The FastTree binary classification boosting is naturally calibrated to
             // output probabilities when transformed using a scaled logistic function,
             // so transform the scores using that.
 
-            var pred = new FastTreeBinaryPredictor(Host, TrainedEnsemble, FeatureCount, InnerArgs);
+            var pred = new FastTreeBinaryPredictor(Host, state.TrainedEnsemble, state.FeatureCount, InnerArgs);
             // FastTree's binary classification boosting framework's natural probabilistic interpretation
             // is explained in "From RankNet to LambdaRank to LambdaMART: An Overview" by Chris Burges.
             // The correctness of this scaling depends upon the gradient calculation in
             // BinaryClassificationObjectiveFunction.GetGradientInOneQuery being consistent with the
             // description in section 6 of the paper.
-            var cali = new PlattCalibrator(Host, -1 * _sigmoidParameter, 0);
+            var cali = new PlattCalibrator(Host, -1 * SigmoidParameter, 0);
             return new FeatureWeightsCalibratedPredictor(Host, pred, cali);
         }
 
-        protected override ObjectiveFunctionBase ConstructObjFunc(IChannel ch)
+        private protected override ObjectiveFunctionBase ConstructObjFunc(IChannel ch, TrainState state)
         {
+            var ms = (MyTrainState)state;
             return new ObjectiveImpl(
-                TrainSet,
-                _trainSetLabels,
+                state.TrainSet,
+                ms.TrainSetLabels,
                 Args.LearningRates,
                 Args.Shrinkage,
-                _sigmoidParameter,
+                SigmoidParameter,
                 Args.UnbalancedSets,
                 Args.MaxTreeOutput,
                 Args.GetDerivativesSampleRate,
@@ -201,71 +202,80 @@ namespace Microsoft.ML.Trainers.FastTree
                 ParallelTraining);
         }
 
-        protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch)
+        private protected override OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch, TrainState state)
         {
-            OptimizationAlgorithm optimizationAlgorithm = base.ConstructOptimizationAlgorithm(ch);
+            OptimizationAlgorithm optimizationAlgorithm = base.ConstructOptimizationAlgorithm(ch, state);
+            var ms = (MyTrainState)state;
             if (Args.UseLineSearch)
             {
-                var lossCalculator = new BinaryClassificationTest(optimizationAlgorithm.TrainingScores, _trainSetLabels, _sigmoidParameter);
+                var lossCalculator = new BinaryClassificationTest(optimizationAlgorithm.TrainingScores, ms.TrainSetLabels, SigmoidParameter);
                 // REVIEW: we should makeloss indices an enum in BinaryClassificationTest
                 optimizationAlgorithm.AdjustTreeOutputsOverride = new LineSearch(lossCalculator, Args.UnbalancedSets ? 3 /*Unbalanced  sets  loss*/ : 1 /*normal loss*/, Args.NumPostBracketSteps, Args.MinStepSize);
             }
             return optimizationAlgorithm;
         }
 
-        private IEnumerable<bool> GetClassificationLabelsFromRatings(Dataset set)
+        private bool[] GetClassificationLabelsFromRatings(Dataset set)
         {
             // REVIEW: Historically FastTree has this test as >= 1. TLC however
             // generally uses > 0. Consider changing FastTree to be consistent.
-            return set.Ratings.Select(x => x >= 1);
+            return set.Ratings.Select(x => x >= 1).ToArray(set.NumDocs);
         }
 
-        protected override void PrepareLabels(IChannel ch)
+        private protected override void PrepareLabels(IChannel ch, TrainState state)
         {
-            _trainSetLabels = GetClassificationLabelsFromRatings(TrainSet).ToArray(TrainSet.NumDocs);
+            var ms = (MyTrainState)state;
+            ms.TrainSetLabels = GetClassificationLabelsFromRatings(state.TrainSet);
             //Here we set regression labels to what is in bin file if the values were not overriden with floats
         }
 
-        protected override Test ConstructTestForTrainingData()
+        private protected override Test ConstructTestForTrainingData(TrainState state)
         {
-            return new BinaryClassificationTest(ConstructScoreTracker(TrainSet), _trainSetLabels, _sigmoidParameter);
+            var ms = (MyTrainState)state;
+            return new BinaryClassificationTest(state.ConstructScoreTracker(state.TrainSet), ms.TrainSetLabels, SigmoidParameter);
         }
 
-        protected override void InitializeTests()
+        private protected override void InitializeTests(TrainState state)
         {
+            var ms = (MyTrainState)state;
             //Always compute training L1/L2 errors
-            TrainTest = new BinaryClassificationTest(ConstructScoreTracker(TrainSet), _trainSetLabels, _sigmoidParameter);
-            Tests.Add(TrainTest);
+            state.TrainTest = new BinaryClassificationTest(state.ConstructScoreTracker(state.TrainSet), ms.TrainSetLabels, SigmoidParameter);
+            state.Tests.Add(state.TrainTest);
 
-            if (ValidSet != null)
+            if (Args.PrintTestGraph)
             {
-                ValidTest = new BinaryClassificationTest(ConstructScoreTracker(ValidSet),
-                    GetClassificationLabelsFromRatings(ValidSet).ToArray(), _sigmoidParameter);
-                Tests.Add(ValidTest);
+
+            }
+
+            if (state.ValidSet != null)
+            {
+                state.ValidTest = new BinaryClassificationTest(state.ConstructScoreTracker(state.ValidSet),
+                    GetClassificationLabelsFromRatings(state.ValidSet), SigmoidParameter);
+                state.Tests.Add(state.ValidTest);
             }
 
             //If external label is missing use Rating column for L1/L2 error
             //The values may not make much sense if regression value is not an actual label value
-            if (TestSets != null)
+            if (state.TestSets != null)
             {
-                for (int t = 0; t < TestSets.Length; ++t)
+                for (int t = 0; t < state.TestSets.Length; ++t)
                 {
-                    bool[] labels = GetClassificationLabelsFromRatings(TestSets[t]).ToArray();
-                    Tests.Add(new BinaryClassificationTest(ConstructScoreTracker(TestSets[t]), labels, _sigmoidParameter));
+                    bool[] labels = GetClassificationLabelsFromRatings(state.TestSets[t]);
+                    state.Tests.Add(new BinaryClassificationTest(state.ConstructScoreTracker(state.TestSets[t]), labels, SigmoidParameter));
                 }
             }
 
-            if (Args.EnablePruning && ValidSet != null)
+            if (Args.EnablePruning && state.ValidSet != null)
             {
                 if (!Args.UseTolerantPruning)
                 {
                     //use simple early stopping condition
-                    PruningTest = new TestHistory(ValidTest, 0);
+                    state.PruningTest = new TestHistory(state.ValidTest, 0);
                 }
                 else
                 {
                     //use tollerant stopping condition
-                    PruningTest = new TestWindowWithTolerance(ValidTest, 0, Args.PruningWindowSize, Args.PruningThreshold);
+                    state.PruningTest = new TestWindowWithTolerance(state.ValidTest, 0, Args.PruningWindowSize, Args.PruningThreshold);
                 }
             }
         }

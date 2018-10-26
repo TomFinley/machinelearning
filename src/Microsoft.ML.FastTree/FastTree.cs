@@ -51,32 +51,81 @@ namespace Microsoft.ML.Trainers.FastTree
         where TArgs : TreeArgs, new()
         where TModel : IPredictorProducing<Float>
     {
-        protected readonly TArgs Args;
-        protected readonly bool AllowGC;
-        protected Ensemble TrainedEnsemble;
-        protected int FeatureCount;
-        protected RoleMappedData ValidData;
-        protected IParallelTraining ParallelTraining;
-        protected OptimizationAlgorithm OptimizationAlgorithm;
-        protected Dataset TrainSet;
-        protected Dataset ValidSet;
-        protected Dataset[] TestSets;
-        protected int[] FeatureMap;
-        protected List<Test> Tests;
-        protected TestHistory PruningTest;
-        protected int[] CategoricalFeatures;
+        private protected readonly TArgs Args;
+        private protected readonly bool AllowGC;
+        public IParallelTraining ParallelTraining;
 
-        // Test for early stopping.
-        protected Test TrainTest;
-        protected Test ValidTest;
+        private protected class TrainState
+        {
+            public Ensemble TrainedEnsemble;
+            public int FeatureCount;
+            public OptimizationAlgorithm OptimizationAlgorithm;
+            public Dataset TrainSet;
+            public Dataset ValidSet;
+            public Dataset[] TestSets;
+            public int[] FeatureMap;
+            public List<Test> Tests;
+            public TestHistory PruningTest;
+            public int[] CategoricalFeatures;
 
-        protected double[] InitTrainScores;
-        protected double[] InitValidScores;
-        protected double[][] InitTestScores;
-        //protected int Iteration;
-        protected Ensemble Ensemble;
+            // Test for early stopping.
+            public Test TrainTest;
+            public Test ValidTest;
 
-        protected bool HasValidSet => ValidSet != null;
+            public double[] InitTrainScores;
+            public double[] InitValidScores;
+            public double[][] InitTestScores;
+            //protected int Iteration;
+            public Ensemble Ensemble;
+
+            public bool HasValidSet => ValidSet != null;
+
+            public bool HasCategoricalFeatures => Utils.Size(CategoricalFeatures) > 0;
+
+            public bool SamplesAreWeighted => TrainSet?.SampleWeights != null;
+
+            public TrainState()
+            {
+                Tests = new List<Test>();
+            }
+
+            public ScoreTracker ConstructScoreTracker(Dataset set)
+            {
+                // If not found contruct one
+                ScoreTracker st = null;
+                if (set == TrainSet)
+                    st = OptimizationAlgorithm.GetScoreTracker("train", TrainSet, InitTrainScores);
+                else if (set == ValidSet)
+                    st = OptimizationAlgorithm.GetScoreTracker("valid", ValidSet, InitValidScores);
+                else
+                {
+                    for (int t = 0; t < TestSets.Length; ++t)
+                    {
+                        if (set == TestSets[t])
+                        {
+                            double[] initTestScores = InitTestScores?[t];
+                            st = OptimizationAlgorithm.GetScoreTracker(string.Format("test[{0}]", t), TestSets[t], initTestScores);
+                        }
+                    }
+                }
+                Contracts.Check(st != null, "unknown dataset passed to ConstructScoreTracker");
+                return st;
+            }
+
+            public double[] GetInitScores(Dataset set)
+            {
+                if (set == TrainSet)
+                    return InitTrainScores;
+                if (set == ValidSet)
+                    return InitValidScores;
+                for (int i = 0; TestSets != null && i < TestSets.Length; i++)
+                {
+                    if (set == TestSets[i])
+                        return InitTestScores?[i];
+                }
+                throw Contracts.Except("Queried for unknown set");
+            }
+        }
 
         private const string RegisterName = "FastTreeTraining";
         // random for active features selection
@@ -85,8 +134,6 @@ namespace Microsoft.ML.Trainers.FastTree
         protected string InnerArgs => CmdParser.GetSettings(Host, Args, new TArgs());
 
         public override TrainerInfo Info { get; }
-
-        public bool HasCategoricalFeatures => Utils.Size(CategoricalFeatures) > 0;
 
         private protected virtual bool NeedCalibration => false;
 
@@ -129,8 +176,9 @@ namespace Microsoft.ML.Trainers.FastTree
             // Finally, even the binary classifiers, being logitboost, tend to not benefit from external calibration.
             Info = new TrainerInfo(normalization: false, caching: false, calibration: NeedCalibration, supportValid: true);
             // REVIEW: CLR 4.6 has a bug that is only exposed in Scope, and if we trigger GC.Collect in scope environment
-            // with memory consumption more than 5GB, GC get stuck in infinite loop. So for now let's call GC only if we call things from LocalEnvironment.
-            AllowGC = (env is HostEnvironmentBase<LocalEnvironment>);
+            // with memory consumption more than 5GB, GC get stuck in infinite loop. So for now let's call GC only if we
+            // call things from LocalEnvironment or ConsoleEnvironment.
+            AllowGC = (env is HostEnvironmentBase<LocalEnvironment> || env is HostEnvironmentBase<ConsoleEnvironment>);
 
             Initialize(env);
         }
@@ -148,24 +196,25 @@ namespace Microsoft.ML.Trainers.FastTree
             // Finally, even the binary classifiers, being logitboost, tend to not benefit from external calibration.
             Info = new TrainerInfo(normalization: false, caching: false, calibration: NeedCalibration, supportValid: true);
             // REVIEW: CLR 4.6 has a bug that is only exposed in Scope, and if we trigger GC.Collect in scope environment
-            // with memory consumption more than 5GB, GC get stuck in infinite loop. So for now let's call GC only if we call things from LocalEnvironment.
-            AllowGC = (env is HostEnvironmentBase<LocalEnvironment>);
+            // with memory consumption more than 5GB, GC get stuck in infinite loop. So for now let's call GC only if we
+            // call things from LocalEnvironment or ConsoleEnvironment.
+            AllowGC = (env is HostEnvironmentBase<LocalEnvironment> || env is HostEnvironmentBase<ConsoleEnvironment>);
 
             Initialize(env);
         }
 
-        protected abstract void PrepareLabels(IChannel ch);
+        private protected abstract void PrepareLabels(IChannel ch, TrainState state);
 
-        protected abstract void InitializeTests();
+        private protected abstract void InitializeTests(TrainState state);
 
-        protected abstract Test ConstructTestForTrainingData();
+        private protected abstract Test ConstructTestForTrainingData(TrainState state);
 
-        protected abstract OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch);
-        protected abstract TreeLearner ConstructTreeLearner(IChannel ch);
+        private protected abstract OptimizationAlgorithm ConstructOptimizationAlgorithm(IChannel ch, TrainState state);
+        private protected abstract TreeLearner ConstructTreeLearner(IChannel ch, TrainState state);
 
-        protected abstract ObjectiveFunctionBase ConstructObjFunc(IChannel ch);
+        private protected abstract ObjectiveFunctionBase ConstructObjFunc(IChannel ch, TrainState state);
 
-        protected virtual Float GetMaxLabel()
+        private protected virtual Float GetMaxLabel()
         {
             return Float.PositiveInfinity;
         }
@@ -185,22 +234,24 @@ namespace Microsoft.ML.Trainers.FastTree
             ParallelTraining = Args.ParallelTrainer != null ? Args.ParallelTrainer.CreateComponent(env) : new SingleTrainer();
             ParallelTraining.InitEnvironment();
 
-            Tests = new List<Test>();
-
             InitializeThreads(numThreads);
         }
 
-        protected void ConvertData(RoleMappedData trainData)
+        private protected void ConvertData(RoleMappedData trainData, RoleMappedData validData, TrainState state)
         {
+            state.FeatureCount = trainData.Schema.Feature.Type.ValueCount;
+            trainData.CheckFeatureFloatVector();
+            trainData.CheckOptFloatWeight();
+
             trainData.Schema.Schema.TryGetColumnIndex(DefaultColumnNames.Features, out int featureIndex);
-            MetadataUtils.TryGetCategoricalFeatureIndices(trainData.Schema.Schema, featureIndex, out CategoricalFeatures);
-            var useTranspose = UseTranspose(Args.DiskTranspose, trainData) && (ValidData == null || UseTranspose(Args.DiskTranspose, ValidData));
+            MetadataUtils.TryGetCategoricalFeatureIndices(trainData.Schema.Schema, featureIndex, out state.CategoricalFeatures);
+            var useTranspose = UseTranspose(Args.DiskTranspose, trainData) && (validData == null || UseTranspose(Args.DiskTranspose, validData));
             var instanceConverter = new ExamplesToFastTreeBins(Host, Args.MaxBins, useTranspose, !Args.FeatureFlocks, Args.MinDocumentsInLeafs, GetMaxLabel());
 
-            TrainSet = instanceConverter.FindBinsAndReturnDataset(trainData, PredictionKind, ParallelTraining, CategoricalFeatures, Args.CategoricalSplit);
-            FeatureMap = instanceConverter.FeatureMap;
-            if (ValidData != null)
-                ValidSet = instanceConverter.GetCompatibleDataset(ValidData, PredictionKind, CategoricalFeatures, Args.CategoricalSplit);
+            state.TrainSet = instanceConverter.FindBinsAndReturnDataset(trainData, PredictionKind, ParallelTraining, state.CategoricalFeatures, Args.CategoricalSplit);
+            state.FeatureMap = instanceConverter.FeatureMap;
+            if (validData != null)
+                state.ValidSet = instanceConverter.GetCompatibleDataset(validData, PredictionKind, state.CategoricalFeatures, Args.CategoricalSplit);
         }
 
         private bool UseTranspose(bool? useTranspose, RoleMappedData data)
@@ -215,7 +266,7 @@ namespace Microsoft.ML.Trainers.FastTree
             return td != null && td.TransposeSchema.GetSlotType(data.Schema.Feature.Index) != null;
         }
 
-        protected void TrainCore(IChannel ch)
+        private protected void TrainCore(IChannel ch, TrainState state)
         {
             Contracts.CheckValue(ch, nameof(ch));
             // REVIEW:Get rid of this lock then we completly remove all static classes from FastTree such as BlockingThreadPool.
@@ -223,41 +274,42 @@ namespace Microsoft.ML.Trainers.FastTree
             {
                 using (Timer.Time(TimerEvent.TotalInitialization))
                 {
-                    CheckArgs(ch);
+                    CheckArgs(ch, state);
                     PrintPrologInfo(ch);
 
-                    Initialize(ch);
-                    PrintMemoryStats(ch);
+                    InitializeTraining(ch, state);
+                    PrintMemoryStats(ch, state);
                 }
                 using (Timer.Time(TimerEvent.TotalTrain))
-                    Train(ch);
+                    Train(ch, state);
                 if (Args.ExecutionTimes)
                     PrintExecutionTimes(ch);
-                TrainedEnsemble = Ensemble;
-                if (FeatureMap != null)
-                    TrainedEnsemble.RemapFeatures(FeatureMap);
+                state.TrainedEnsemble = state.Ensemble;
+                if (state.FeatureMap != null)
+                    state.TrainedEnsemble.RemapFeatures(state.FeatureMap);
                 ParallelTraining.FinalizeEnvironment();
             }
         }
 
-        protected virtual bool ShouldStop(IChannel ch, ref IEarlyStoppingCriterion earlyStopping, ref int bestIteration)
+        private protected virtual bool ShouldStop(IChannel ch, TrainState state, ref IEarlyStoppingCriterion earlyStopping, ref int bestIteration)
         {
-            bestIteration = Ensemble.NumTrees;
+            bestIteration = state.Ensemble.NumTrees;
             return false;
         }
-        protected virtual int GetBestIteration(IChannel ch) => Ensemble.NumTrees;
 
-        protected virtual void InitializeThreads(int numThreads)
+        private protected virtual int GetBestIteration(IChannel ch, TrainState state) => state.Ensemble.NumTrees;
+
+        private void InitializeThreads(int numThreads)
         {
             ThreadTaskManager.Initialize(numThreads);
         }
 
-        protected virtual void PrintExecutionTimes(IChannel ch)
+        private protected virtual void PrintExecutionTimes(IChannel ch)
         {
             ch.Info("Execution time breakdown:\n{0}", Timer.GetString());
         }
 
-        protected virtual void CheckArgs(IChannel ch)
+        private protected virtual void CheckArgs(IChannel ch, TrainState state)
         {
             Args.Check(ch);
 
@@ -313,44 +365,44 @@ namespace Microsoft.ML.Trainers.FastTree
         /// it to print a specific line of test graph after a new iteration is finished.
         /// </summary>
         /// <returns> string representation of a line of test graph </returns>
-        protected virtual string GetTestGraphLine() => string.Empty;
+        private protected virtual string GetTestGraphLine(TrainState state) => "";
 
         /// <summary>
         /// A virtual method that is used to compute test results after each iteration is finished.
         /// </summary>
-        protected virtual void ComputeTests()
+        private protected virtual void ComputeTests(TrainState state)
         {
         }
 
-        protected void PrintTestGraph(IChannel ch)
+        private protected void PrintTestGraph(IChannel ch, TrainState state)
         {
             // we call Tests computing no matter whether we require to print test graph
-            ComputeTests();
+            ComputeTests(state);
 
             if (!Args.PrintTestGraph)
                 return;
 
-            if (Ensemble.NumTrees == 0)
+            if (state.Ensemble.NumTrees == 0)
                 ch.Info(GetTestGraphHeader());
             else
-                ch.Info(GetTestGraphLine());
+                ch.Info(GetTestGraphLine(state));
 
             return;
         }
 
-        protected virtual void Initialize(IChannel ch)
+        private protected virtual void InitializeTraining(IChannel ch, TrainState state)
         {
             #region Load/Initialize State
 
             using (Timer.Time(TimerEvent.InitializeLabels))
-                PrepareLabels(ch);
+                PrepareLabels(ch, state);
             using (Timer.Time(TimerEvent.InitializeTraining))
             {
-                InitializeEnsemble();
-                OptimizationAlgorithm = ConstructOptimizationAlgorithm(ch);
+                state.Ensemble = new Ensemble();
+                state.OptimizationAlgorithm = ConstructOptimizationAlgorithm(ch, state);
             }
             using (Timer.Time(TimerEvent.InitializeTests))
-                InitializeTests();
+                InitializeTests(state);
             if (AllowGC)
             {
                 GC.Collect(2, GCCollectionMode.Forced);
@@ -412,15 +464,15 @@ namespace Microsoft.ML.Trainers.FastTree
         }
 #endif
 
-        protected bool[] GetActiveFeatures()
+        private protected bool[] GetActiveFeatures(TrainState state)
         {
-            var activeFeatures = Utils.CreateArray(TrainSet.NumFeatures, true);
+            var activeFeatures = Utils.CreateArray(state.TrainSet.NumFeatures, true);
             if (Args.FeatureFraction < 1.0)
             {
                 if (_featureSelectionRandom == null)
                     _featureSelectionRandom = new Random(Args.FeatureSelectSeed);
 
-                for (int i = 0; i < TrainSet.NumFeatures; ++i)
+                for (int i = 0; i < state.TrainSet.NumFeatures; ++i)
                 {
                     if (activeFeatures[i])
                         activeFeatures[i] = _featureSelectionRandom.NextDouble() <= Args.FeatureFraction;
@@ -438,18 +490,18 @@ namespace Microsoft.ML.Trainers.FastTree
                 set.NumDocs, set.NumQueries, set.NumFeatures, datasetSize / 1024 / 1024, (datasetSize - skeletonSize) / 1024 / 1024);
         }
 
-        protected virtual void PrintMemoryStats(IChannel ch)
+        private void PrintMemoryStats(IChannel ch, TrainState state)
         {
             Contracts.AssertValue(ch);
-            ch.Trace("Training {0}", GetDatasetStatistics(TrainSet));
+            ch.Trace("Training {0}", GetDatasetStatistics(state.TrainSet));
 
-            if (ValidSet != null)
-                ch.Trace("Validation {0}", GetDatasetStatistics(ValidSet));
-            if (TestSets != null)
+            if (state.ValidSet != null)
+                ch.Trace("Validation {0}", GetDatasetStatistics(state.ValidSet));
+            if (state.TestSets != null)
             {
-                for (int i = 0; i < TestSets.Length; ++i)
+                for (int i = 0; i < state.TestSets.Length; ++i)
                     ch.Trace("ComputeTests[{1}] {0}",
-                        GetDatasetStatistics(TestSets[i]), i);
+                        GetDatasetStatistics(state.TestSets[i]), i);
             }
 
             if (AllowGC)
@@ -465,22 +517,12 @@ namespace Microsoft.ML.Trainers.FastTree
                 currentProcess.PeakVirtualMemorySize64 / 1024 / 1024);
         }
 
-        protected bool AreSamplesWeighted(IChannel ch)
-        {
-            return TrainSet.SampleWeights != null;
-        }
-
-        private void InitializeEnsemble()
-        {
-            Ensemble = new Ensemble();
-        }
-
         /// <summary>
         /// Creates weights wrapping (possibly, trivial) for gradient target values.
         /// </summary>
-        protected virtual IGradientAdjuster MakeGradientWrapper(IChannel ch)
+        private protected virtual IGradientAdjuster MakeGradientWrapper(IChannel ch, TrainState state)
         {
-            if (AreSamplesWeighted(ch))
+            if (state.SamplesAreWeighted)
                 return new QueryWeightsGradientWrapper();
             else
                 return new TrivialGradientWrapper();
@@ -585,10 +627,10 @@ namespace Microsoft.ML.Trainers.FastTree
         }
 #endif
 
-        protected virtual BaggingProvider CreateBaggingProvider()
+        private protected virtual BaggingProvider CreateBaggingProvider(TrainState state)
         {
             Contracts.Assert(Args.BaggingSize > 0);
-            return new BaggingProvider(TrainSet, Args.NumLeaves, Args.RngSeed, Args.BaggingTrainFraction);
+            return new BaggingProvider(state.TrainSet, Args.NumLeaves, Args.RngSeed, Args.BaggingTrainFraction);
         }
 
         protected virtual bool ShouldRandomStartOptimizer()
@@ -596,14 +638,14 @@ namespace Microsoft.ML.Trainers.FastTree
             return false;
         }
 
-        protected virtual void Train(IChannel ch)
+        private protected virtual void Train(IChannel ch, TrainState state)
         {
             Contracts.AssertValue(ch);
             int numTotalTrees = Args.NumTrees;
 
             ch.Info(
                 "Reserved memory for tree learner: {0} bytes",
-                OptimizationAlgorithm.TreeLearner.GetSizeOfReservedMemory());
+                state.OptimizationAlgorithm.TreeLearner.GetSizeOfReservedMemory());
 
 #if !NO_STORE
             if (_args.offloadBinsToFileStore)
@@ -616,16 +658,16 @@ namespace Microsoft.ML.Trainers.FastTree
 
             // random starting point
             bool revertRandomStart = false;
-            if (Ensemble.NumTrees < numTotalTrees && ShouldRandomStartOptimizer())
+            if (state.Ensemble.NumTrees < numTotalTrees && ShouldRandomStartOptimizer())
             {
                 ch.Info("Randomizing start point");
-                OptimizationAlgorithm.TrainingScores.RandomizeScores(Args.RngSeed, false);
+                state.OptimizationAlgorithm.TrainingScores.RandomizeScores(Args.RngSeed, false);
                 revertRandomStart = true;
             }
 
             ch.Info("Starting to train ...");
 
-            BaggingProvider baggingProvider = Args.BaggingSize > 0 ? CreateBaggingProvider() : null;
+            BaggingProvider baggingProvider = Args.BaggingSize > 0 ? CreateBaggingProvider(state) : null;
 
 #if OLD_DATALOAD
 #if !NO_STORE
@@ -650,21 +692,21 @@ namespace Microsoft.ML.Trainers.FastTree
             int emptyTrees = 0;
             using (var pch = Host.StartProgressChannel("FastTree training"))
             {
-                pch.SetHeader(new ProgressHeader("trees"), e => e.SetProgress(0, Ensemble.NumTrees, numTotalTrees));
-                while (Ensemble.NumTrees < numTotalTrees)
+                pch.SetHeader(new ProgressHeader("trees"), e => e.SetProgress(0, state.Ensemble.NumTrees, numTotalTrees));
+                while (state.Ensemble.NumTrees < numTotalTrees)
                 {
                     using (Timer.Time(TimerEvent.Iteration))
                     {
 #if NO_STORE
-                        bool[] activeFeatures = GetActiveFeatures();
+                        bool[] activeFeatures = GetActiveFeatures(state);
 #else
                         bool[] activeFeatures = _activeFeatureSetQueue.Dequeue();
 #endif
 
-                        if (Args.BaggingSize > 0 && Ensemble.NumTrees % Args.BaggingSize == 0)
+                        if (Args.BaggingSize > 0 && state.Ensemble.NumTrees % Args.BaggingSize == 0)
                         {
                             baggingProvider.GenerateNewBag();
-                            OptimizationAlgorithm.TreeLearner.Partitioning =
+                            state.OptimizationAlgorithm.TreeLearner.Partitioning =
                                 baggingProvider.GetCurrentTrainingPartition();
                         }
 
@@ -678,18 +720,18 @@ namespace Microsoft.ML.Trainers.FastTree
 #endif
 
                         // call the weak learner
-                        var tree = OptimizationAlgorithm.TrainingIteration(ch, activeFeatures);
+                        var tree = state.OptimizationAlgorithm.TrainingIteration(ch, activeFeatures);
                         if (tree == null)
                         {
                             emptyTrees++;
                             numTotalTrees--;
                         }
-                        else if (Args.BaggingSize > 0 && Ensemble.Trees.Count() > 0)
+                        else if (Args.BaggingSize > 0 && state.Ensemble.NumTrees > 0)
                         {
-                            ch.Assert(Ensemble.Trees.Last() == tree);
-                            Ensemble.Trees.Last()
-                                .AddOutputsToScores(OptimizationAlgorithm.TrainingScores.Dataset,
-                                    OptimizationAlgorithm.TrainingScores.Scores,
+                            ch.Assert(state.Ensemble.Trees.Last() == tree);
+                            state.Ensemble.Trees.Last()
+                                .AddOutputsToScores(state.OptimizationAlgorithm.TrainingScores.Dataset,
+                                    state.OptimizationAlgorithm.TrainingScores.Scores,
                                     baggingProvider.GetCurrentOutOfBagPartition().Documents);
                         }
 
@@ -697,8 +739,8 @@ namespace Microsoft.ML.Trainers.FastTree
 
                         using (Timer.Time(TimerEvent.Test))
                         {
-                            PrintIterationMessage(ch, pch);
-                            PrintTestResults(ch);
+                            PrintIterationMessage(ch, pch, state);
+                            PrintTestResults(ch, state);
                         }
 
                         // revert randomized start
@@ -706,7 +748,7 @@ namespace Microsoft.ML.Trainers.FastTree
                         {
                             revertRandomStart = false;
                             ch.Info("Reverting random score assignment");
-                            OptimizationAlgorithm.TrainingScores.RandomizeScores(Args.RngSeed, true);
+                            state.OptimizationAlgorithm.TrainingScores.RandomizeScores(Args.RngSeed, true);
                         }
 
 #if !NO_STORE
@@ -732,7 +774,7 @@ namespace Microsoft.ML.Trainers.FastTree
                             }
                         }
 #endif
-                        if (ShouldStop(ch, ref earlyStoppingRule, ref bestIteration))
+                        if (ShouldStop(ch, state, ref earlyStoppingRule, ref bestIteration))
                             break;
                     }
                 }
@@ -749,15 +791,15 @@ namespace Microsoft.ML.Trainers.FastTree
                 Contracts.Assert(numTotalTrees == 0 || bestIteration > 0);
                 // REVIEW: Need to reconcile with future progress reporting changes.
                 ch.Info("The training is stopped at {0} and iteration {1} is picked",
-                    Ensemble.NumTrees, bestIteration);
+                    state.Ensemble.NumTrees, bestIteration);
             }
             else
             {
-                bestIteration = GetBestIteration(ch);
+                bestIteration = GetBestIteration(ch, state);
             }
 
-            OptimizationAlgorithm.FinalizeLearning(bestIteration);
-            Ensemble.PopulateRawThresholds(TrainSet);
+            state.OptimizationAlgorithm.FinalizeLearning(bestIteration);
+            state.Ensemble.PopulateRawThresholds(state.TrainSet);
             ParallelTraining.FinalizeTreeLearner();
         }
 
@@ -777,26 +819,26 @@ namespace Microsoft.ML.Trainers.FastTree
 
         // This method is called at the end of each training iteration, with the tree that was learnt on that iteration.
         // Note that this tree can be null if no tree was learnt this iteration.
-        protected virtual void CustomizedTrainingIteration(RegressionTree tree)
+        private protected virtual void CustomizedTrainingIteration(RegressionTree tree, TrainState state)
         {
         }
 
-        protected virtual void PrintIterationMessage(IChannel ch, IProgressChannel pch)
+        private protected virtual void PrintIterationMessage(IChannel ch, IProgressChannel pch, TrainState state)
         {
             // REVIEW: report some metrics, not just number of trees?
-            int iteration = Ensemble.NumTrees;
+            int iteration = state.Ensemble.NumTrees;
             if (iteration % 50 == 49)
                 pch.Checkpoint(iteration + 1);
         }
 
-        protected virtual void PrintTestResults(IChannel ch)
+        private protected virtual void PrintTestResults(IChannel ch, TrainState state)
         {
-            if (Args.TestFrequency != int.MaxValue && (Ensemble.NumTrees % Args.TestFrequency == 0 || Ensemble.NumTrees == Args.NumTrees))
+            if (Args.TestFrequency != int.MaxValue && (state.Ensemble.NumTrees % Args.TestFrequency == 0 || state.Ensemble.NumTrees == Args.NumTrees))
             {
                 var sb = new StringBuilder();
                 using (var sw = new StringWriter(sb))
                 {
-                    foreach (var t in Tests)
+                    foreach (var t in state.Tests)
                     {
                         var results = t.ComputeTests();
                         sw.Write(t.FormatInfoString());
@@ -807,7 +849,7 @@ namespace Microsoft.ML.Trainers.FastTree
                     ch.Info(sb.ToString());
             }
         }
-        protected virtual void PrintPrologInfo(IChannel ch)
+        private void PrintPrologInfo(IChannel ch)
         {
             Contracts.AssertValue(ch);
             ch.Trace("Host = {0}", Environment.MachineName);
@@ -816,49 +858,26 @@ namespace Microsoft.ML.Trainers.FastTree
             ch.Trace("{0}", Args);
         }
 
-        protected ScoreTracker ConstructScoreTracker(Dataset set)
-        {
-            // If not found contruct one
-            ScoreTracker st = null;
-            if (set == TrainSet)
-                st = OptimizationAlgorithm.GetScoreTracker("train", TrainSet, InitTrainScores);
-            else if (set == ValidSet)
-                st = OptimizationAlgorithm.GetScoreTracker("valid", ValidSet, InitValidScores);
-            else
-            {
-                for (int t = 0; t < TestSets.Length; ++t)
-                {
-                    if (set == TestSets[t])
-                    {
-                        double[] initTestScores = InitTestScores?[t];
-                        st = OptimizationAlgorithm.GetScoreTracker(string.Format("test[{0}]", t), TestSets[t], initTestScores);
-                    }
-                }
-            }
-            Contracts.Check(st != null, "unknown dataset passed to ConstructScoreTracker");
-            return st;
-        }
-
-        private double[] ComputeScoresSmart(IChannel ch, Dataset set)
+        private double[] ComputeScoresSmart(IChannel ch, Dataset set, TrainState state)
         {
             if (!Args.CompressEnsemble)
             {
-                foreach (var st in OptimizationAlgorithm.TrackedScores)
+                foreach (var st in state.OptimizationAlgorithm.TrackedScores)
                     if (st.Dataset == set)
                     {
                         ch.Trace("Computing scores fast");
                         return st.Scores;
                     }
             }
-            return ComputeScoresSlow(ch, set);
+            return ComputeScoresSlow(ch, set, state);
         }
 
-        private double[] ComputeScoresSlow(IChannel ch, Dataset set)
+        private double[] ComputeScoresSlow(IChannel ch, Dataset set, TrainState state)
         {
             ch.Trace("Computing scores slow");
             double[] scores = new double[set.NumDocs];
-            Ensemble.GetOutputs(set, scores);
-            double[] initScores = GetInitScores(set);
+            state.Ensemble.GetOutputs(set, scores);
+            double[] initScores = state.GetInitScores(set);
             if (initScores != null)
             {
                 Contracts.Check(scores.Length == initScores.Length, "Length of initscores and scores mismatch");
@@ -866,20 +885,6 @@ namespace Microsoft.ML.Trainers.FastTree
                     scores[i] += initScores[i];
             }
             return scores;
-        }
-
-        private double[] GetInitScores(Dataset set)
-        {
-            if (set == TrainSet)
-                return InitTrainScores;
-            if (set == ValidSet)
-                return InitValidScores;
-            for (int i = 0; TestSets != null && i < TestSets.Length; i++)
-            {
-                if (set == TestSets[i])
-                    return InitTestScores?[i];
-            }
-            throw Contracts.Except("Queried for unknown set");
         }
     }
 
