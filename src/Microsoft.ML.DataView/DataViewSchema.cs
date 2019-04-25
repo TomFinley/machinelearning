@@ -75,7 +75,7 @@ namespace Microsoft.ML
         /// <summary>
         /// This class describes one column in the particular schema.
         /// </summary>
-        public struct Column
+        public readonly struct Column
         {
             /// <summary>
             /// The name of the column.

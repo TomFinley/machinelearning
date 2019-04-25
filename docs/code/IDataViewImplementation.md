@@ -516,3 +516,60 @@ but when the `SlotNames` annotation kind for a given column is either absent,
 (same length vectors as the input), the behavior is not to throw or yield
 errors or do anything of the kind, but to simply say, "oh, I don't really have
 slot names," and proceed as if the slot names hadn't been present at all.
+
+This seemingly simple statement has a few minor but important logical
+implications that are not always obvious to people, so it is worth expanding
+on this point a bit. The most common question I get is, if we detect what is
+an "invalid" annotation, why should we not throw? The answer is that since
+there was no system for "reserving" what annotation could or not be used in
+any context, it is legal for an `IDataView` implementation to have any
+annotation at all. So there can be no concept of "illegal" annotation without
+that hypothetical reservation system, which was not considered worthwhile to
+invent at the time `IDataView` was being devised. To retroactively claim that
+an annotation is now reserved and must follow a particular convention if
+present would practically amount to a breaking change on the `IDataView`
+interface.
+
+To give a practical example, one of the latest kinds of annotation to be
+considered canonical within the ML.NET codebase was `CategoricalSlotRanges`,
+this being used to indicate which ranges of slot indices for a particular
+column corresponded to categorical one-hot-encodings. By that time,
+`IDataView` had existed in more or less its present form for some years, and
+there was nothing in the interface for `IDataView` or its schema that
+suggested this word had been reserved prior to the point where we introduced
+it. For that reason, if we were to claim that this was now reserved, this
+would be hoisting another requirement onto the already defined interface of
+`IDataView`, which is, again, not something you can do for a publicly
+implementable interface. So, because you cannot do it, we embraced the obvious
+alternative where we are *tolerant* to the fact that annotations even with the
+"right" name may have the wrong form.
+
+To give a practical common example, consider the `SlotNames` annotation.
+[There is a utility method, `HasSlotNames` that determines whether this column
+*really* has slot names.][1]
+
+[1]: https://github.com/dotnet/machinelearning/blob/7b59ce5031769a75f07cc4daeeeb9fc60ee53177/src/Microsoft.ML.Core/Data/AnnotationUtils.cs#L287-L295
+
+This tolerance means that to test whether a column actually logically can be
+considered to have slot names, requires the following:
+
+* The column type must be a `VectorDataViewKind` of known size,
+* There is an annotation with name `SlotNames` on that column,
+* The annotation has type `VectorDataViewKind`, with item type of
+  `TextDataViewKind`, and known size whose size is equal to the size of the
+  original column.
+
+For any of these conditions to be unmet does not mean that an error has
+occurred. The implication is simply that the `IDataView` simply does not have
+slot names for that column.
+
+Now, this tolerance does not mean that, say, a specific `ITransformer` cannot
+have a dependence on certain annotation being present, and fail if it is not
+structured according to *its* requirements. That is perfectly fine, since
+sometimes the express purpose of a specific `ITransformer` implementor is to
+have a mapping that in some way depends on the annotation. To take the most
+commonly applied example within ML.NET, the `KeyToValueMappingTransformer`
+*needs* input `KeyValues` annotations on whatever column it has been
+configured to read. We consider it OK to fail in that case, because, in that
+case, you're applying a transformer whose express purpose is to interpret the
+annotation in a specific fashion.
