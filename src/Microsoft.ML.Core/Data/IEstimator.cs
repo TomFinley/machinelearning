@@ -153,7 +153,7 @@ namespace Microsoft.ML
             /// Returns whether <paramref name="source"/> is a valid input, if this object represents a
             /// requirement.
             ///
-            /// Namely, it returns true if and only if:
+            /// Namely, it returns <see langword="true"/> if and only if:
             ///  - The <see cref="Name"/>, <see cref="Kind"/>, <see cref="ItemType"/>, <see cref="IsKey"/> fields match.
             ///  - The columns of <see cref="Annotations"/> of <paramref name="source"/> is a superset of our <see cref="Annotations"/> columns.
             ///  - Each such annotation column is itself compatible with the input annotation column.
@@ -194,7 +194,7 @@ namespace Microsoft.ML
             }
 
             /// <summary>
-            /// Return if this structure is not identical to the default value of <see cref="Column"/>. If true,
+            /// Return if this structure is not identical to the default value of <see cref="Column"/>. If <see langword="true"/>,
             /// it means this structure is initialized properly and therefore considered as valid.
             /// </summary>
             [BestFriend]
@@ -305,6 +305,10 @@ namespace Microsoft.ML
         /// Produce the data view from the specified input.
         /// Note that <see cref="IDataView"/>'s are lazy, so no actual loading happens here, just schema validation.
         /// </summary>
+        /// <returns>
+        /// The loaded data. Note that the <see cref="IDataView.Schema"/> of the return value
+        /// should be the same as that returned from the <see cref="GetOutputSchema"/>.
+        /// </returns>
         IDataView Load(TSource input);
 
         /// <summary>
@@ -314,8 +318,9 @@ namespace Microsoft.ML
     }
 
     /// <summary>
-    /// Sometimes we need to 'fit' an <see cref="IDataLoader{TIn}"/>.
-    /// A DataLoader estimator is the object that does it.
+    /// Sometimes we need to 'fit' an <see cref="IDataLoader{TIn}"/>, in the case where, for instance,
+    /// the output schema is data dependent.
+    /// A <see cref="IDataLoaderEstimator{TSource, TLoader}"/> is the object that does it.
     /// </summary>
     public interface IDataLoaderEstimator<in TSource, out TLoader>
         where TLoader : IDataLoader<TSource>
@@ -332,6 +337,12 @@ namespace Microsoft.ML
         /// The 'promise' of the output schema.
         /// It will be used for schema propagation.
         /// </summary>
+        /// <remarks>
+        /// The relationship and contract between this method's return value and
+        /// <see cref="IDataLoader{TSource}.GetOutputSchema"/> is quite similar to that of
+        /// <see cref="IEstimator{TTransformer}.GetOutputSchema(SchemaShape)"/> and
+        /// <see cref="ITransformer.GetOutputSchema(DataViewSchema)"/>.
+        /// </remarks>
         SchemaShape GetOutputSchema();
     }
 
@@ -369,7 +380,7 @@ namespace Microsoft.ML
 
         /// <summary>
         /// Constructs a row-to-row mapper based on an input schema. If <see cref="IsRowToRowMapper"/>
-        /// is <c>false</c>, then an exception should be thrown. If the input schema is in any way
+        /// is <see langword="false"/>, then an exception should be thrown. If the input schema is in any way
         /// unsuitable for constructing the mapper, an exception should likewise be thrown.
         /// </summary>
         /// <param name="inputSchema">The input schema for which we should get the mapper.</param>
@@ -407,17 +418,20 @@ namespace Microsoft.ML
         /// result of a transformation will be a column with a name, that this column will be a vector of <see
         /// cref="float"/> of known size (even though, prior to fitting, we do not yet know what that size will be), and
         /// we also know that there will be <c>SlotNames</c> annotation for this column (even though, again, we don't
-        /// know what those names will be).
+        /// know what those names will be). The implementation of this method, properly written, would throw with an
+        /// appropriately descriptive exception to to tell the user what was wrong.
         ///
         /// Even in that indefinite form, this can catch many common errors. For example, simple typos in the column
-        /// names, basic misunderstandings about what type is acceptable to what components, are one of the primary goals
-        /// of this structure.
+        /// names, basic misunderstandings about what type is acceptable to what components, can be caught using this
+        /// approach.
         ///
-        /// The general expectation with <see cref="SchemaShape"/> being a "relaxed" schema means that not all the
-        /// validation that may happen during <see cref="Fit(IDataView)"/> or the <see cref="ITransformer"/> methods is
+        /// This approach is far from perfect. The general expectation with <see cref="SchemaShape"/> being a "relaxed"
+        /// schema means that not all the validation that may happen during <see cref="Fit(IDataView)"/> or the <see cref="ITransformer"/> methods is
         /// possible to do in this method. That is, this method offers a somewhat relaxed form of validation. The goal
         /// of implementors should be, if the methods on a <see cref="ITransformer"/> returned from
-        /// <see cref="Fit(IDataView)"/> would succeed, then so too should this validation succeed.
+        /// <see cref="Fit(IDataView)"/> would succeed, then so too should this validation succeed. But, it may be that
+        /// this method will succeed, but the actual <see cref="Fit(IDataView)"/> or the methods on <see cref="ITransformer"/>
+        /// might not succeed.
         ///
         /// There is a small and usually unimportant detail about the correspondence between <see cref="DataViewSchema.Annotations"/>
         /// and <see cref="SchemaShape.Column.Annotations"/>. One of the design implications of
