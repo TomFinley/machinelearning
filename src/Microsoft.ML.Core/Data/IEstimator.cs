@@ -350,6 +350,11 @@ namespace Microsoft.ML
     /// The transformer is a component that transforms data.
     /// It also supports 'schema propagation' to answer the question of 'how will the data with this schema look, after you transform it?'.
     /// </summary>
+    /// <remarks>
+    /// Due to <see cref="ITransformer"/> being an important part of models during deployment of machine learning models
+    /// which often requires multiple threads, it is important that all methods on an implementation of this be re-entrant
+    /// and thread safe.
+    /// </remarks>
     public interface ITransformer : ICanSaveModel
     {
         /// <summary>
@@ -399,6 +404,20 @@ namespace Microsoft.ML
         /// <summary>
         /// Train and return a transformer.
         /// </summary>
+        /// <param name="input">The data from which to </param>
+        /// <returns>The "trained."</returns>
+        /// <remarks>
+        /// Note that some estimators are "untrainable," which is to say, they return the same <typeparamref name="TTransformer"/>
+        /// regardless of <paramref name="input"/>.
+        ///
+        /// This method should absolutely not be considered to be thread safe. Despite having to appear stateless
+        /// and threadsafe as regards <see cref="GetOutputSchema(SchemaShape)"/>, the same is not true for this method.
+        /// To give the most common example of why this must be so, many algorithms in machine learning benefit from random
+        /// initialization and stochastic behavior. In practice this involves sampling from a
+        /// <see cref="System.Random"/> instance is kept with the <see cref="IEstimator{TTransformer}"/> instance (specifically, in practice, <see cref="IHost.Rand"/>) so as to
+        /// allow repeated calls to <see cref="Fit(IDataView)"/> to give somewhat different results. But, this does mean that the <see cref="Fit(IDataView)"/> is at least
+        /// potentially somewhat stateful, which means no thread safety.
+        /// </remarks>
         TTransformer Fit(IDataView input);
 
         /// <summary>
@@ -432,6 +451,12 @@ namespace Microsoft.ML
         /// <see cref="Fit(IDataView)"/> would succeed, then so too should this validation succeed. But, it may be that
         /// this method will succeed, but the actual <see cref="Fit(IDataView)"/> or the methods on <see cref="ITransformer"/>
         /// might not succeed.
+        ///
+        /// Because one of the primary responsibilities of this object is to not only fit <see cref="ITransformer"/> instances
+        /// but also to communicate schema information in pipelines, it is important that this function be consistent: given
+        /// an <see cref="IEstimator{TTransformer}"/> instance, an implementation of this method should always return identical
+        /// outputs for identical inputs. Otherwise, the whole machinery of schema propagation and reasoning over schemas which
+        /// ML.NET uses to reason about pipelines falls apart.
         ///
         /// There is a small and usually unimportant detail about the correspondence between <see cref="DataViewSchema.Annotations"/>
         /// and <see cref="SchemaShape.Column.Annotations"/>. One of the design implications of
