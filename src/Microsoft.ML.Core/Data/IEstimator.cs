@@ -90,13 +90,13 @@ namespace Microsoft.ML
             /// The 'raw' type of column item.
             /// </summary>
             /// <remarks>
-            /// This entry is meant to be descriptive as regards the type in <see cref="DataViewSchema.Column.Type"/>, but is
-            /// will not necessarily have the same value.
+            /// This entry is meant to be descriptive as regards the type in <see cref="DataViewSchema.Column.Type"/> in the
+            /// corresponding column, but it will not necessarily have the same value.
             ///
             /// For <see cref="IEstimator{TTransformer}"/> implementations that deal with "custom" <see cref="DataViewType"/>
             /// derived types, that is, those types that are not defined in the same assembly as <see cref="IDataView"/>,
             /// the <see cref="IEstimator{TTransformer}"/> and <see cref="ITransformer"/> implementations are free to develop
-            /// whatever conventions are appropriate for their usage.
+            /// whatever conventions are appropriate for their usage since that code alone would presumably 
             ///
             /// For the standard types, aside from <see cref="VectorDataViewType"/> and <see cref="KeyDataViewType"/>,
             /// this field will hold the same value as <see cref="DataViewSchema.Column.Type"/> as the corresponding type.
@@ -150,13 +150,12 @@ namespace Microsoft.ML
             }
 
             /// <summary>
-            /// Returns whether <paramref name="source"/> is a valid input, if this object represents a
-            /// requirement.
+            /// Returns whether <paramref name="source"/> is a valid input, if this object represents a requirement.
             ///
-            /// Namely, it returns <see langword="true"/> if and only if:
-            ///  - The <see cref="Name"/>, <see cref="Kind"/>, <see cref="ItemType"/>, <see cref="IsKey"/> fields match.
-            ///  - The columns of <see cref="Annotations"/> of <paramref name="source"/> is a superset of our <see cref="Annotations"/> columns.
-            ///  - Each such annotation column is itself compatible with the input annotation column.
+            /// Namely, it returns <see langword="true"/> if and only if: - The <see cref="Name"/>, <see cref="Kind"/>,
+            /// <see cref="ItemType"/>, <see cref="IsKey"/> fields match. - The columns of <see cref="Annotations"/> of
+            /// <paramref name="source"/> is a superset of our <see cref="Annotations"/> columns. - Each such annotation
+            /// column is itself compatible with the input annotation column.
             /// </summary>
             [BestFriend]
             internal bool IsCompatibleWith(Column source)
@@ -407,16 +406,17 @@ namespace Microsoft.ML
         /// <param name="input">The data from which to </param>
         /// <returns>The "trained."</returns>
         /// <remarks>
-        /// Note that some estimators are "untrainable," which is to say, they return the same <typeparamref name="TTransformer"/>
-        /// regardless of <paramref name="input"/>.
+        /// Note that some estimators are not fitted, which is to say, they return identically behaving
+        /// <typeparamref name="TTransformer"/> implementations regardless of <paramref name="input"/>.
         ///
-        /// This method should absolutely not be considered to be thread safe. Despite having to appear stateless
-        /// and threadsafe as regards <see cref="GetOutputSchema(SchemaShape)"/>, the same is not true for this method.
-        /// To give the most common example of why this must be so, many algorithms in machine learning benefit from random
+        /// This method should not be considered to be thread safe. Despite having to appear stateless and threadsafe as
+        /// regards <see cref="GetOutputSchema(SchemaShape)"/>, the same is not true for this method. To give the most
+        /// common example of why this must be so, many algorithms in machine learning benefit from random
         /// initialization and stochastic behavior. In practice this involves sampling from a
-        /// <see cref="System.Random"/> instance is kept with the <see cref="IEstimator{TTransformer}"/> instance (specifically, in practice, <see cref="IHost.Rand"/>) so as to
-        /// allow repeated calls to <see cref="Fit(IDataView)"/> to give somewhat different results. But, this does mean that the <see cref="Fit(IDataView)"/> is at least
-        /// potentially somewhat stateful, which means no thread safety.
+        /// <see cref="System.Random"/> instance is kept with the <see cref="IEstimator{TTransformer}"/> instance
+        /// (specifically, in practice, <see cref="IHost.Rand"/>) so as to allow repeated calls to <see
+        /// cref="Fit(IDataView)"/> to give somewhat different results. But, this does mean that the <see
+        /// cref="Fit(IDataView)"/> is at least potentially somewhat stateful, which means no thread safety.
         /// </remarks>
         TTransformer Fit(IDataView input);
 
@@ -445,12 +445,12 @@ namespace Microsoft.ML
         /// approach.
         ///
         /// This approach is far from perfect. The general expectation with <see cref="SchemaShape"/> being a "relaxed"
-        /// schema means that not all the validation that may happen during <see cref="Fit(IDataView)"/> or the <see cref="ITransformer"/> methods is
-        /// possible to do in this method. That is, this method offers a somewhat relaxed form of validation. The goal
-        /// of implementors should be, if the methods on a <see cref="ITransformer"/> returned from
-        /// <see cref="Fit(IDataView)"/> would succeed, then so too should this validation succeed. But, it may be that
-        /// this method will succeed, but the actual <see cref="Fit(IDataView)"/> or the methods on <see cref="ITransformer"/>
-        /// might not succeed.
+        /// schema means that not all the validation that may happen during <see cref="Fit(IDataView)"/> or the
+        /// <see cref="ITransformer"/> methods is possible to do in this method. That is, this method offers a somewhat
+        /// relaxed form of validation. The goal of implementors should be, if the methods on a
+        /// <see cref="ITransformer"/> returned from <see cref="Fit(IDataView)"/> would succeed, then so too should this
+        /// validation succeed. But, it may be that this method will succeed, but the actual
+        /// <see cref="Fit(IDataView)"/> or the methods on <see cref="ITransformer"/> might not succeed.
         ///
         /// Because one of the primary responsibilities of this object is to not only fit <see cref="ITransformer"/> instances
         /// but also to communicate schema information in pipelines, it is important that this function be consistent: given

@@ -8,11 +8,9 @@ using System.Collections.Generic;
 namespace Microsoft.ML.Data
 {
     /// <summary>
-    /// This interface maps an input <see cref="DataViewRow"/> to an output <see cref="DataViewRow"/>. Typically, the output contains
-    /// both the input columns and new columns added by the implementing class, although some implementations may
-    /// return a subset of the input columns.
-    /// This interface is similar to <see cref="ISchemaBoundRowMapper"/>, except it does not have any input role mappings,
-    /// so to rebind, the same input column names must be used.
+    /// This interface maps an input <see cref="DataViewRow"/> to an output <see cref="DataViewRow"/>.
+    /// Typically, the output contains both the input columns and new columns added by the implementing class,
+    /// although some implementations may return a subset of the input columns.
     /// Implementations of this interface are typically created over defined input <see cref="DataViewSchema"/>.
     /// </summary>
     public interface IRowToRowMapper
@@ -30,6 +28,10 @@ namespace Microsoft.ML.Data
         /// <summary>
         /// Given a set of columns, return the input columns that are needed to generate those output columns.
         /// </summary>
+        /// <param name="dependingColumns">Columns from <see cref="OutputSchema"/> that one wishes to be
+        /// active on the input.</param>
+        /// <returns>Columns from <see cref="InputSchema"/> that would need to be active on an input
+        /// <see cref="DataViewRow"/> to produce an output with those </returns>
         IEnumerable<DataViewSchema.Column> GetDependencies(IEnumerable<DataViewSchema.Column> dependingColumns);
 
         /// <summary>
@@ -46,6 +48,10 @@ namespace Microsoft.ML.Data
         /// The output <see cref="DataViewRow"/> values are re-computed when requested through the getters. Also, the returned
         /// <see cref="DataViewRow"/> will dispose <paramref name="input"/> when it is disposed.
         /// </summary>
+        /// <param name="input">The input row. Note that <see cref="DataViewRow.Schema"/> must be reference
+        /// equal to <see cref="InputSchema"/>.</param>
+        /// <param name="activeColumns">The set of columns from </param>
+        /// 
         DataViewRow GetRow(DataViewRow input, IEnumerable<DataViewSchema.Column> activeColumns);
     }
 }

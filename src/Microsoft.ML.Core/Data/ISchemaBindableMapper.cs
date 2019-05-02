@@ -40,7 +40,8 @@ namespace Microsoft.ML.Data
         RoleMappedSchema InputRoleMappedSchema { get; }
 
         /// <summary>
-        /// Gets schema of this mapper's output.
+        /// Gets schema of this mapper's output. Crucially, this describes only the new columns that are added
+        /// by the implementation.
         /// </summary>
         DataViewSchema OutputSchema { get; }
 
@@ -57,6 +58,11 @@ namespace Microsoft.ML.Data
 
     /// <summary>
     /// This interface extends <see cref="ISchemaBoundMapper"/>.
+    ///
+    /// This interface is similar to <see cref="IRowToRowMapper"/>, and indeed the most common use-case
+    /// of this interface is to create an implementation of that interface. However, it is meant for the
+    /// specific but common situation where one is mapping an input row to an output row with strict addition
+    /// on the columns, based on a limited subset of the columns.
     /// </summary>
     [BestFriend]
     internal interface ISchemaBoundRowMapper : ISchemaBoundMapper
